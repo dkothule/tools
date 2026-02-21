@@ -1,5 +1,7 @@
 # md2pdf
 
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+
 Convert Markdown to PDF with high-resolution Mermaid diagrams (SVG embedded in PDF output).
 
 ## Why this tool
