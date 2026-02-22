@@ -98,6 +98,61 @@ install_python_dependency() {
   exit 1
 }
 
+ensure_tex_path_macos() {
+  local tex_bin="/Library/TeX/texbin"
+  if [[ ! -d "$tex_bin" ]]; then
+    return
+  fi
+
+  case ":$PATH:" in
+    *":$tex_bin:"*)
+      ;;
+    *)
+      export PATH="$tex_bin:$PATH"
+      ;;
+  esac
+}
+
+ensure_xelatex_macos() {
+  ensure_tex_path_macos
+  if command -v xelatex >/dev/null 2>&1; then
+    return
+  fi
+
+  echo "Installing BasicTeX for xelatex..."
+  brew install --cask basictex
+  ensure_tex_path_macos
+
+  if command -v xelatex >/dev/null 2>&1; then
+    return
+  fi
+
+  local tlmgr_bin="/Library/TeX/texbin/tlmgr"
+  if [[ -x "$tlmgr_bin" ]]; then
+    if [[ -t 0 ]]; then
+      echo "BasicTeX installed but xelatex is still missing. Installing TeX collection-xetex..."
+      sudo "$tlmgr_bin" install collection-xetex || true
+      ensure_tex_path_macos
+    else
+      echo "BasicTeX installed but xelatex is still missing."
+      echo "Run this command to install it:"
+      echo "  sudo $tlmgr_bin install collection-xetex"
+    fi
+  fi
+
+  if command -v xelatex >/dev/null 2>&1; then
+    return
+  fi
+
+  echo "Error: xelatex is still not available." >&2
+  echo "If /Library/TeX/texbin/xelatex exists, add TeX to PATH and restart your shell:" >&2
+  echo "  echo 'export PATH=\"/Library/TeX/texbin:\$PATH\"' >> ~/.zshrc" >&2
+  echo "  source ~/.zshrc" >&2
+  echo "If xelatex binary is missing, install it with:" >&2
+  echo "  sudo /Library/TeX/texbin/tlmgr install collection-xetex" >&2
+  exit 1
+}
+
 install_macos() {
   if ! command -v brew >/dev/null 2>&1; then
     echo "Homebrew is required on macOS. Install from https://brew.sh and retry."
@@ -111,11 +166,7 @@ install_macos() {
     brew install node
   fi
 
-  if ! command -v xelatex >/dev/null 2>&1; then
-    echo "Installing BasicTeX for xelatex..."
-    brew install --cask basictex
-    echo "BasicTeX installed. You may need to restart your shell before retrying."
-  fi
+  ensure_xelatex_macos
 }
 
 install_debian_ubuntu() {
