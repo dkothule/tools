@@ -117,6 +117,42 @@ if [[ ! -x "\$MD2PDF_SCRIPT" ]] &amp;&amp; [[ -z "\$(command -v md2pdf 2&gt;/dev
   print -u2 -- "Error: md2pdf is not in PATH: \$PATH"
   exit 127
 fi
+
+unset PYTHONNOUSERSITE
+pick_python_with_pandocfilters() {
+  local candidate
+  local -a candidates
+  candidates=("/opt/homebrew/bin/python3" "/usr/local/bin/python3")
+  if [[ -n "\$(command -v python3 2&gt;/dev/null)" ]]; then
+    candidates+=("\$(command -v python3)")
+  fi
+
+  for candidate in "\${candidates[@]}"; do
+    [[ -n "\$candidate" ]] || continue
+    [[ -x "\$candidate" ]] || continue
+    if "\$candidate" - &lt;&lt;'PY' &gt;/dev/null 2&gt;&amp;1
+import pandocfilters
+PY
+    then
+      print -r -- "\$candidate"
+      return 0
+    fi
+  done
+  return 1
+}
+
+PYTHON_BIN="\$(pick_python_with_pandocfilters || true)"
+if [[ -z "\$PYTHON_BIN" ]]; then
+  print -u2 -- "Error: Missing Python dependency: pandocfilters."
+  print -u2 -- "Install with:"
+  if [[ -x /opt/homebrew/bin/python3 ]]; then
+    print -u2 -- "  /opt/homebrew/bin/python3 -m pip install --user pandocfilters"
+  fi
+  print -u2 -- "  python3 -m pip install --user pandocfilters"
+  exit 1
+fi
+export PYTHON="\$PYTHON_BIN"
+
 for f in "\$@"; do
   case "\$f" in
     *.md|*.MD) ;;
@@ -255,5 +291,8 @@ echo "Installed Quick Action: $WORKFLOW_NAME"
 echo "Location: $WORKFLOW_DIR"
 echo "Using md2pdf executable: $MD2PDF_SCRIPT"
 echo
-echo "If it does not appear immediately in Finder context menu, restart Finder:"
+echo "If it does not appear in Finder context menu:"
+echo "  1) Right-click a .md file -> Quick Actions -> Customize..."
+echo "  2) Enable '$WORKFLOW_NAME' in Extensions -> Finder"
+echo "  3) Restart Finder"
 echo "  killall Finder"

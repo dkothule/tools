@@ -109,16 +109,20 @@ Install Finder context menu action:
 md2pdf-install-finder-action
 ```
 
+If it does not appear in Finder right away:
+
+1. Right-click a `.md` file and choose `Quick Actions` -> `Customize...`
+2. Enable `Convert Markdown to PDF` under `Extensions` -> `Finder`
+3. Restart Finder:
+
+```bash
+killall Finder
+```
+
 Uninstall Finder context menu action:
 
 ```bash
 md2pdf-uninstall-finder-action
-```
-
-If Finder menu does not refresh immediately:
-
-```bash
-killall Finder
 ```
 
 After installation, right-click any `.md` file in Finder:

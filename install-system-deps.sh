@@ -5,6 +5,7 @@ set -euo pipefail
 
 YES=0
 OS="$(uname -s)"
+PYTHON_BIN=""
 
 usage() {
   cat <<EOF
@@ -71,30 +72,88 @@ confirm_install() {
 }
 
 has_pandocfilters() {
-  python3 - <<'PY' >/dev/null 2>&1
+  local python_bin="$1"
+  "$python_bin" - <<'PY' >/dev/null 2>&1
 import pandocfilters
 PY
 }
 
+resolve_python_bin() {
+  local candidate
+  local -a candidates
+
+  candidates=("/opt/homebrew/bin/python3" "/usr/local/bin/python3")
+  if command -v python3 >/dev/null 2>&1; then
+    candidates+=("$(command -v python3)")
+  fi
+
+  for candidate in "${candidates[@]}"; do
+    [[ -n "$candidate" ]] || continue
+    [[ -x "$candidate" ]] || continue
+    if "$candidate" -c 'import sys; print(sys.executable)' >/dev/null 2>&1; then
+      printf '%s' "$candidate"
+      return 0
+    fi
+  done
+
+  return 1
+}
+
+ensure_python_bin() {
+  if PYTHON_BIN="$(resolve_python_bin)"; then
+    echo "Using Python interpreter: $PYTHON_BIN"
+    return
+  fi
+
+  echo "Error: python3 not found after dependency installation." >&2
+  if [[ "$OS" == "Darwin" ]]; then
+    echo "Install Python with Homebrew and retry:" >&2
+    echo "  brew install python" >&2
+  elif [[ "$OS" == "Linux" ]]; then
+    echo "Install Python and pip, then retry:" >&2
+    echo "  sudo apt-get install -y python3 python3-pip" >&2
+  fi
+  exit 1
+}
+
+ensure_python_pip() {
+  local python_bin="$1"
+  if "$python_bin" -m pip --version >/dev/null 2>&1; then
+    return
+  fi
+
+  "$python_bin" -m ensurepip --upgrade >/dev/null 2>&1 || true
+  "$python_bin" -m pip --version >/dev/null 2>&1
+}
+
 install_python_dependency() {
-  if has_pandocfilters; then
+  local python_bin="$1"
+
+  if ! ensure_python_pip "$python_bin"; then
+    echo "Error: pip is not available for $python_bin." >&2
+    echo "Install pip and retry. Example:" >&2
+    echo "  $python_bin -m ensurepip --upgrade" >&2
+    exit 1
+  fi
+
+  if has_pandocfilters "$python_bin"; then
     echo "Python dependency already installed: pandocfilters"
     return
   fi
 
   echo "Installing Python dependency: pandocfilters"
-  if python3 -m pip install --user pandocfilters; then
+  if "$python_bin" -m pip install --user pandocfilters; then
     return
   fi
 
-  if python3 -m pip install pandocfilters --break-system-packages; then
+  if "$python_bin" -m pip install pandocfilters --break-system-packages; then
     return
   fi
 
   echo "Failed to install pandocfilters automatically." >&2
   echo "Please install manually with one of:" >&2
-  echo "  python3 -m pip install --user pandocfilters" >&2
-  echo "  python3 -m pip install pandocfilters --break-system-packages" >&2
+  echo "  $python_bin -m pip install --user pandocfilters" >&2
+  echo "  $python_bin -m pip install pandocfilters --break-system-packages" >&2
   exit 1
 }
 
@@ -203,6 +262,7 @@ else
   exit 1
 fi
 
-install_python_dependency
+ensure_python_bin
+install_python_dependency "$PYTHON_BIN"
 
 echo "Runtime dependencies installed."
