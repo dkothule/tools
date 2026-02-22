@@ -1,6 +1,6 @@
 {
   "name": "@dkothule/md2pdf",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Markdown to PDF converter with high-resolution Mermaid diagram rendering",
   "author": "Deepak Kothule",
   "license": "MIT",
