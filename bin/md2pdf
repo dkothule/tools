@@ -138,7 +138,11 @@ cleanup_mermaid_assets() {
     return
   fi
   if [[ -n "${MERMAID_ASSET_DIR_ABS:-}" && -d "$MERMAID_ASSET_DIR_ABS" ]]; then
-    rm -rf "$MERMAID_ASSET_DIR_ABS"
+    if ! rm -rf "$MERMAID_ASSET_DIR_ABS"; then
+      echo "Warning: failed to clean Mermaid assets: $MERMAID_ASSET_DIR_ABS" >&2
+      echo "You can remove it manually:" >&2
+      echo "  rm -rf \"$MERMAID_ASSET_DIR_ABS\"" >&2
+    fi
   fi
 }
 
