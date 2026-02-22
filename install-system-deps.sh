@@ -56,9 +56,11 @@ confirm_install() {
   echo "Detected OS: $OS"
   printf "Continue? [y/N] "
   local response
+  local normalized_response
   read -r response
+  normalized_response="$(printf '%s' "$response" | tr '[:upper:]' '[:lower:]')"
 
-  case "${response,,}" in
+  case "$normalized_response" in
     y|yes)
       ;;
     *)

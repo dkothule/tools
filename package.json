@@ -1,6 +1,6 @@
 {
   "name": "@dkothule/md2pdf",
-  "version": "1.0.3",
+  "version": "1.0.4",
   "description": "Markdown to PDF converter with high-resolution Mermaid diagram rendering",
   "author": "Deepak Kothule",
   "license": "MIT",
@@ -52,6 +52,6 @@
     "postinstall": "echo \"Mermaid CLI installed\""
   },
   "dependencies": {
-    "@mermaid-js/mermaid-cli": "10.9.1"
+    "@mermaid-js/mermaid-cli": "11.12.0"
   }
 }
