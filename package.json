@@ -4,6 +4,26 @@
   "description": "Markdown to PDF converter with high-resolution Mermaid diagram rendering",
   "author": "Deepak Kothule",
   "license": "MIT",
+  "keywords": [
+    "markdown",
+    "md",
+    "pdf",
+    "markdown-to-pdf",
+    "md2pdf",
+    "mermaid",
+    "mermaid-cli",
+    "pandoc",
+    "documentation",
+    "cli"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/dkothule/md2pdf.git"
+  },
+  "homepage": "https://github.com/dkothule/md2pdf#readme",
+  "bugs": {
+    "url": "https://github.com/dkothule/md2pdf/issues"
+  },
   "publishConfig": {
     "access": "public"
   },
