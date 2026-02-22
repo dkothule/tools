@@ -101,6 +101,9 @@ python3 -m pip install pandocfilters
 - `python3`
 - `node` + `npm`
 
+Note: the npm "Dependencies" tab only lists Node package dependencies.
+System tools (`pandoc`, `xelatex`, `rsvg-convert`, `python3`, `pandocfilters`) are runtime prerequisites and are installed outside npm.
+
 ## macOS Finder Quick Action (Optional)
 
 Install Finder context menu action:
@@ -229,6 +232,9 @@ md2pdf ./tests/samples/mermaid-all-diagram-types.md --keep-mermaid-assets
 - On macOS, if `xelatex` is still missing after `md2pdf-install-system-deps`:
   - Add TeX to PATH: `echo 'export PATH="/Library/TeX/texbin:$PATH"' >> ~/.zshrc && source ~/.zshrc`
   - If binary is still missing: `sudo /Library/TeX/texbin/tlmgr install collection-xetex`
+- On macOS Finder Quick Actions in `Downloads`, first-run privacy prompts can block temp-asset cleanup.
+  - If conversion succeeded but cleanup warning appears, output PDF is still usable.
+  - Remove leftover assets manually: `rm -rf ~/Downloads/md2pdf-mermaid-*-images`
 
 ## Keywords
 
