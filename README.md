@@ -54,18 +54,22 @@ npm i -g @dkothule/md2pdf
 2) Install runtime dependencies (system packages + `pandocfilters`):
 
 ```bash
-md2pdf-install-system-deps
-```
-
-Use `--yes` to skip the confirmation prompt (helpful for automation):
-
-```bash
 md2pdf-install-system-deps --yes
 ```
 
-3) Verify:
+If you prefer an interactive confirmation prompt, run:
 
 ```bash
+md2pdf-install-system-deps
+```
+
+3) Verify runtime tools + CLI:
+
+```bash
+pandoc --version | head -n 1
+xelatex --version | head -n 1
+rsvg-convert --version
+python3 -c "import pandocfilters; print('pandocfilters ok')"
 md2pdf --version
 md2pdf --help
 ```
@@ -218,6 +222,9 @@ md2pdf ./tests/samples/mermaid-all-diagram-types.md --keep-mermaid-assets
 - Flowchart/graph labels missing in PDF: keep `MERMAID_AUTO_PDF_FALLBACK=true`.
 - Diagram taking a full page: keep `MERMAID_PDF_FIT=true`.
 - PDF engine missing: install `xelatex` or set `PDF_ENGINE`.
+- On macOS, if `xelatex` is still missing after `md2pdf-install-system-deps`:
+  - Add TeX to PATH: `echo 'export PATH="/Library/TeX/texbin:$PATH"' >> ~/.zshrc && source ~/.zshrc`
+  - If binary is still missing: `sudo /Library/TeX/texbin/tlmgr install collection-xetex`
 
 ## Keywords
 
