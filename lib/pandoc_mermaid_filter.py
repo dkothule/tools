@@ -35,6 +35,8 @@ MERMAID_CONFIG = os.environ.get("MERMAID_CONFIG", None)
 PUPPETEER_CFG = os.environ.get("PUPPETEER_CFG", None)
 MERMAID_IMAGE_PREFIX = os.environ.get("MERMAID_IMAGE_PREFIX", "mermaid")
 MERMAID_LATEX_FORMAT = os.environ.get("MERMAID_LATEX_FORMAT", "svg")
+MERMAID_HTML_FORMAT = os.environ.get("MERMAID_HTML_FORMAT", "svg")
+MERMAID_FORCE_FORMAT = os.environ.get("MERMAID_FORCE_FORMAT", "")
 
 
 def env_bool(name, default):
@@ -81,13 +83,16 @@ def mermaid(key, value, format_, _):
         if "mermaid" in classes:
             caption, typef, keyvals = get_caption(keyvals)
             filename = get_filename4code(MERMAID_IMAGE_PREFIX, code)
-            filetype = get_extension(
-                format_,
-                MERMAID_LATEX_FORMAT,
-                html="svg",
-                latex=MERMAID_LATEX_FORMAT,
-                pdf=MERMAID_LATEX_FORMAT,
-            )
+            if MERMAID_FORCE_FORMAT:
+                filetype = MERMAID_FORCE_FORMAT.lower()
+            else:
+                filetype = get_extension(
+                    format_,
+                    MERMAID_LATEX_FORMAT,
+                    html=MERMAID_HTML_FORMAT,
+                    latex=MERMAID_LATEX_FORMAT,
+                    pdf=MERMAID_LATEX_FORMAT,
+                )
             src = filename + ".mmd"
             dest = filename + "." + filetype
             txt = code.encode(sys.getfilesystemencoding())

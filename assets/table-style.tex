@@ -5,3 +5,13 @@
 \usepackage{array}
 \setlength{\tabcolsep}{4pt}
 \renewcommand{\arraystretch}{1.2}
+
+% Improve box-drawing glyph coverage in code blocks for common macOS/Linux fonts.
+\usepackage{iftex}
+\ifPDFTeX\else
+  \IfFontExistsTF{DejaVu Sans Mono}{\setmonofont{DejaVu Sans Mono}}{
+    \IfFontExistsTF{Menlo}{\setmonofont{Menlo}}{
+      \IfFontExistsTF{Noto Sans Mono}{\setmonofont{Noto Sans Mono}}{}
+    }
+  }
+\fi

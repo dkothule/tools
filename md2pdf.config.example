@@ -9,8 +9,22 @@
 #
 # All keys are optional.
 
-# PDF engine command used by pandoc.
+# PDF renderer mode:
+# - latex: pandoc -> xelatex PDF (default)
+# - chromium: pandoc -> standalone HTML -> headless Chromium print-to-PDF
+PDF_RENDERER=latex
+
+# PDF engine command used by pandoc (latex renderer only).
 PDF_ENGINE=xelatex
+
+# Optional Chromium/Chrome executable path or command name.
+# Used only when PDF_RENDERER=chromium.
+# CHROMIUM_BIN=/Applications/Google\ Chrome.app/Contents/MacOS/Google\ Chrome
+
+# Mermaid asset format when PDF_RENDERER=chromium.
+# png is default for cross-machine print stability; svg has better zoom quality
+# but can fail on large Mermaid-heavy documents with some Chromium builds.
+CHROMIUM_MERMAID_FORMAT=png
 
 # Pandoc formatting columns.
 PANDOC_COLUMNS=200
@@ -32,6 +46,16 @@ MERMAID_BIN=mmdc
 # Mermaid asset format for LaTeX/PDF output (pdf, svg, png).
 # Default is svg to keep high-resolution vector Mermaid diagrams in PDF output.
 MERMAID_LATEX_FORMAT=svg
+
+# LaTeX emoji strategy (latex renderer only):
+# - auto: use twemoji mapping for detected emoji code points; then mono font
+# - off: disable md2pdf emoji assistance for XeLaTeX
+LATEX_EMOJI_MODE=auto
+
+# Monochrome fallback font used when LATEX_EMOJI_MODE=auto and twemoji mapping
+# is not available.
+# Set empty to disable fallback font override.
+LATEX_EMOJI_MONO_FONT=DejaVu Sans
 
 # When rendering Mermaid to PDF (directly or via fallback), use fit-to-content page bounds.
 # This avoids page-sized Mermaid PDF assets that can force one diagram per page.

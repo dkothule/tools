@@ -15,6 +15,9 @@ It keeps Mermaid diagrams sharp in PDF by rendering vector assets (SVG by defaul
 - Auto fallback to Mermaid PDF for diagrams that use `foreignObject` labels.
 - Fit-to-content PDF fallback (`--pdfFit`) to avoid full-page diagram artifacts.
 - Better edge-label readability in flowchart/graph diagrams.
+- Markdown normalization for reliable output (tables, tight lists, list parsing after bold lead-ins).
+- Unicode cleanup/mapping in LaTeX mode for common symbols (`≥`, `≤`, `↗`) and emoji variation selectors.
+- XeLaTeX emoji assistance: uses Twemoji mapping first, then mono fallback font.
 - Configurable defaults (`~/.config/md2pdf/config.env`, project `.md2pdfrc`, or `--config`).
 - Optional Finder Quick Action integration on macOS.
 
@@ -102,6 +105,7 @@ python3 -m pip install pandocfilters
 - `librsvg` / `rsvg-convert`
 - `python3`
 - `node` + `npm`
+- `chrome`/`chromium` (only when using `--renderer chromium`)
 
 Note: the npm "Dependencies" tab only lists Node package dependencies.
 System tools (`pandoc`, `xelatex`, `rsvg-convert`, `python3`, `pandocfilters`) are runtime prerequisites and are installed outside npm.
@@ -163,6 +167,12 @@ md2pdf uses:
 - `MERMAID_LATEX_FORMAT=svg` by default for vector quality in PDF.
 - `MERMAID_AUTO_PDF_FALLBACK=true` by default to preserve flowchart/graph node labels when SVG uses `foreignObject`.
 - `MERMAID_PDF_FIT=true` by default so Mermaid PDF fallback assets use tight bounds and do not force one-diagram-per-page.
+- `LATEX_EMOJI_MODE=auto` by default so XeLaTeX uses Twemoji mapping for detected emoji code points, then falls back to `DejaVu Sans`.
+- Pandoc input uses `markdown+lists_without_preceding_blankline` so list blocks after bold lead-ins render correctly.
+- Conversion normalizes markdown by:
+  - inserting missing blank lines before pipe-table headers,
+  - removing trailing two-space hard-break markers on list-item lines (tight list spacing),
+  - removing variation selectors (`U+FE0E`/`U+FE0F`) and mapping common symbols (`≥`, `≤`, `↗`) in LaTeX mode.
 
 ## Configuration
 
@@ -188,10 +198,14 @@ md2pdf --init ./md2pdf.config.env --force
 Example config:
 
 ```bash
+PDF_RENDERER=latex
+CHROMIUM_MERMAID_FORMAT=png
 PDF_ENGINE=xelatex
 LR_MARGIN=0.7in
 TB_MARGIN=0.5in
 MERMAID_LATEX_FORMAT=svg
+LATEX_EMOJI_MODE=auto
+LATEX_EMOJI_MONO_FONT=DejaVu Sans
 MERMAID_PDF_FIT=true
 MERMAID_AUTO_PDF_FALLBACK=true
 CLEANUP_MERMAID_ASSETS=true
@@ -209,9 +223,18 @@ md2pdf --init
 Common options:
 
 - `-o, --output <file>`: output PDF path
+- `--renderer <latex|chromium>`: choose PDF backend (`latex` default)
 - `--config <file>`: load additional config file
 - `--keep-mermaid-assets`: keep generated Mermaid temp files
 - `--cleanup-mermaid-assets`: remove generated Mermaid temp files (default)
+
+Renderer notes:
+
+- `latex` (default): Pandoc + XeLaTeX output, existing behavior.
+- `chromium`: Pandoc renders standalone HTML and Chrome/Chromium prints to PDF.
+- `chromium` mode is useful when you need browser-grade emoji/glyph rendering.
+- `CHROMIUM_MERMAID_FORMAT=svg|png` controls Mermaid asset format in Chromium mode (`png` default for stability).
+- In `latex` mode, `LATEX_EMOJI_MODE=auto` uses `twemojis` mapping, then `LATEX_EMOJI_MONO_FONT`.
 
 ## Test samples
 
@@ -228,9 +251,16 @@ md2pdf ./tests/samples/mermaid-all-diagram-types.md --keep-mermaid-assets
 ## Troubleshooting
 
 - `mmdc not found`: install dependencies and verify `MERMAID_BIN`.
+- Pipe-table rows render as plain text: `md2pdf` now auto-normalizes missing blank lines before `|` table headers during conversion.
+- Lists after bold labels render as one paragraph: `md2pdf` now parses markdown with `lists_without_preceding_blankline`; no manual blank line is required.
+- Bullet lists have extra vertical space: trailing double-space hard breaks at end of list items are trimmed during normalization.
 - Flowchart/graph labels missing in PDF: keep `MERMAID_AUTO_PDF_FALLBACK=true`.
 - Diagram taking a full page: keep `MERMAID_PDF_FIT=true`.
 - PDF engine missing: install `xelatex` or set `PDF_ENGINE`.
+- Chromium renderer missing browser binary: install Chrome/Chromium or set `CHROMIUM_BIN` when `PDF_RENDERER=chromium`.
+- Chromium Mermaid issues on some machines: keep `CHROMIUM_MERMAID_FORMAT=png` for stable browser printing.
+- Emoji glyph warnings (`✅`, `⭐`, 🙂, etc.): keep `LATEX_EMOJI_MODE=auto`, ensure TeX has `twemojis`/`newunicodechar`, and keep a valid `LATEX_EMOJI_MONO_FONT` fallback.
+- Need full emoji fidelity with minimal LaTeX tuning: use `--renderer chromium` and keep `CHROMIUM_MERMAID_FORMAT=png` for stable Mermaid printing.
 - On macOS, if `xelatex` is still missing after `md2pdf-install-system-deps`:
   - Add TeX to PATH: `echo 'export PATH="/Library/TeX/texbin:$PATH"' >> ~/.zshrc && source ~/.zshrc`
   - If binary is still missing: `sudo /Library/TeX/texbin/tlmgr install collection-xetex`

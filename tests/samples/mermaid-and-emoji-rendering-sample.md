@@ -2,6 +2,15 @@
 
 This file is a playground document with a broad set of Mermaid diagram types you can render with `md2pdf`.
 
+## Emoji + Text Rendering Showcase
+
+- ✅ Default path test: `xelatex` + SVG Mermaid + `twemojis/newunicodechar` mapping.
+- 📈 Unicode symbols in text: `≥`, `≤`, `↗` should render without warnings.
+- 😀 Emoji-in-text sample: if you can see this smiley in the PDF, emoji mapping is active.
+- 🚀 Chromium mode option: `--renderer chromium` uses browser-native emoji shaping.
+
+This page intentionally mixes emoji, symbols, and Mermaid diagrams so one sample file validates both text rendering and diagram quality.
+
 ## 1. Flowchart
 
 ```mermaid
@@ -236,4 +245,3 @@ sankey-beta
   Mermaid filter,Mermaid assets,55
   Pandoc pipeline,Final PDF,100
 ```
-

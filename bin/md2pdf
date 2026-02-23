@@ -84,6 +84,26 @@ require_cmd() {
   fi
 }
 
+detect_chromium_bin() {
+  local candidates=(
+    "google-chrome"
+    "google-chrome-stable"
+    "chromium"
+    "chromium-browser"
+    "chrome"
+    "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
+    "/Applications/Chromium.app/Contents/MacOS/Chromium"
+  )
+  local candidate
+  for candidate in "${candidates[@]}"; do
+    if is_executable_cmd "$candidate"; then
+      printf '%s' "$candidate"
+      return 0
+    fi
+  done
+  return 1
+}
+
 load_config_file() {
   local config_file="$1"
   local line_no=0
@@ -106,6 +126,7 @@ load_config_file() {
     value="$(strip_outer_quotes "$value")"
 
     case "$key" in
+      PDF_RENDERER) PDF_RENDERER="$value" ;;
       PDF_ENGINE) PDF_ENGINE="$value" ;;
       PANDOC_COLUMNS) PANDOC_COLUMNS="$value" ;;
       LR_MARGIN) LR_MARGIN="$value" ;;
@@ -119,8 +140,12 @@ load_config_file() {
       MERMAID_BIN) MERMAID_BIN="$(resolve_config_path "$config_file" "$value")" ;;
       MERMAID_CONFIG) MERMAID_CONFIG="$(resolve_config_path "$config_file" "$value")" ;;
       MERMAID_LATEX_FORMAT) MERMAID_LATEX_FORMAT="$value" ;;
+      CHROMIUM_MERMAID_FORMAT) CHROMIUM_MERMAID_FORMAT="$value" ;;
       MERMAID_PDF_FIT) MERMAID_PDF_FIT="$(normalize_bool "$value")" ;;
       MERMAID_AUTO_PDF_FALLBACK) MERMAID_AUTO_PDF_FALLBACK="$(normalize_bool "$value")" ;;
+      LATEX_EMOJI_MODE) LATEX_EMOJI_MODE="$value" ;;
+      LATEX_EMOJI_MONO_FONT) LATEX_EMOJI_MONO_FONT="$value" ;;
+      CHROMIUM_BIN) CHROMIUM_BIN="$(resolve_config_path "$config_file" "$value")" ;;
       PYTHON) PYTHON="$(resolve_config_path "$config_file" "$value")" ;;
       PUPPETEER_CFG) PUPPETEER_CFG="$(resolve_config_path "$config_file" "$value")" ;;
       *)
@@ -146,6 +171,162 @@ cleanup_mermaid_assets() {
   fi
 }
 
+cleanup_normalized_input() {
+  if [[ -n "${NORMALIZED_INPUT_PATH:-}" && -f "$NORMALIZED_INPUT_PATH" ]]; then
+    rm -f "$NORMALIZED_INPUT_PATH" || true
+  fi
+}
+
+cleanup_chromium_artifacts() {
+  if [[ -n "${CHROMIUM_HTML_PATH:-}" && -f "$CHROMIUM_HTML_PATH" ]]; then
+    rm -f "$CHROMIUM_HTML_PATH" || true
+  fi
+  if [[ -n "${CHROMIUM_CSS_PATH:-}" && -f "$CHROMIUM_CSS_PATH" ]]; then
+    rm -f "$CHROMIUM_CSS_PATH" || true
+  fi
+}
+
+cleanup_latex_emoji_header() {
+  if [[ -n "${LATEX_EMOJI_HEADER_PATH:-}" && -f "$LATEX_EMOJI_HEADER_PATH" ]]; then
+    rm -f "$LATEX_EMOJI_HEADER_PATH" || true
+  fi
+}
+
+cleanup_runtime_artifacts() {
+  cleanup_mermaid_assets
+  cleanup_normalized_input
+  cleanup_chromium_artifacts
+  cleanup_latex_emoji_header
+}
+
+normalize_pipe_table_spacing() {
+  local input_path="$1"
+  local temp_path
+  temp_path="$(mktemp "${TMPDIR:-/tmp}/md2pdf-normalized-XXXXXX")"
+
+  # Pandoc requires a blank line before pipe tables. Normalize common
+  # markdown where emphasis/paragraph text is immediately followed by a table.
+  awk '
+  function is_table_delim(value) {
+    return value ~ /^[[:space:]]*\|?[[:space:]]*:?-{3,}:?[[:space:]]*(\|[[:space:]]*:?-{3,}:?[[:space:]]*)+\|?[[:space:]]*$/
+  }
+  {
+    lines[NR] = $0
+  }
+  END {
+    in_fence = 0
+    fence_char = ""
+    prev = ""
+    for (i = 1; i <= NR; i++) {
+      line = lines[i]
+
+      if (in_fence == 0) {
+        if (line ~ /^[[:space:]]*```+/) {
+          in_fence = 1
+          fence_char = "`"
+          print line
+          prev = line
+          continue
+        }
+        if (line ~ /^[[:space:]]*~~~+/) {
+          in_fence = 1
+          fence_char = "~"
+          print line
+          prev = line
+          continue
+        }
+      } else {
+        if ((fence_char == "`" && line ~ /^[[:space:]]*```+[[:space:]]*$/) ||
+            (fence_char == "~" && line ~ /^[[:space:]]*~~~+[[:space:]]*$/)) {
+          in_fence = 0
+          fence_char = ""
+        }
+        print line
+        prev = line
+        continue
+      }
+
+      is_pipe_header = (line ~ /^[[:space:]]*\|/)
+      next_is_delim = (i < NR && is_table_delim(lines[i + 1]))
+      prev_is_blank = (prev ~ /^[[:space:]]*$/)
+      if (is_pipe_header && next_is_delim && !prev_is_blank) {
+        print ""
+      }
+
+      print line
+      prev = line
+    }
+  }
+  ' "$input_path" > "$temp_path"
+
+  # Strip emoji variation selectors that commonly trigger missing-glyph
+  # warnings under XeLaTeX while preserving the base code point.
+  local unicode_temp_path
+  unicode_temp_path="$(mktemp "${TMPDIR:-/tmp}/md2pdf-normalized-unicode-XXXXXX")"
+  if "$PYTHON" - "$temp_path" "$unicode_temp_path" <<'PY'
+import pathlib
+import re
+import sys
+
+source_path = pathlib.Path(sys.argv[1])
+target_path = pathlib.Path(sys.argv[2])
+text = source_path.read_text(encoding="utf-8", errors="ignore")
+lines = text.splitlines()
+normalized = []
+
+in_fence = False
+fence_char = ""
+for line in lines:
+    line = line.replace("\ufe0e", "").replace("\ufe0f", "")
+    stripped = line.lstrip()
+
+    if not in_fence:
+        if stripped.startswith("```"):
+            in_fence = True
+            fence_char = "`"
+            normalized.append(line)
+            continue
+        if stripped.startswith("~~~"):
+            in_fence = True
+            fence_char = "~"
+            normalized.append(line)
+            continue
+
+        # Avoid loose-list spacing when markdown list items end with two
+        # spaces (hard line break marker).
+        if re.match(r"^[ \t]*(?:[-+*]|\d+[.)])\s+", line):
+            line = re.sub(r"[ ]{2,}$", "", line)
+    else:
+        if (
+            (fence_char == "`" and re.match(r"^[ \t]*```+[ \t]*$", line))
+            or (fence_char == "~" and re.match(r"^[ \t]*~~~+[ \t]*$", line))
+        ):
+            in_fence = False
+            fence_char = ""
+
+    normalized.append(line)
+
+output = "\n".join(normalized)
+if text.endswith("\n"):
+    output += "\n"
+target_path.write_text(output, encoding="utf-8")
+PY
+  then
+    mv "$unicode_temp_path" "$temp_path"
+  else
+    rm -f "$unicode_temp_path" || true
+  fi
+
+  if cmp -s "$input_path" "$temp_path"; then
+    rm -f "$temp_path"
+    printf '%s' "$input_path"
+    return
+  fi
+
+  NORMALIZED_INPUT_PATH="$temp_path"
+  printf '%s' "$temp_path"
+}
+
 get_cli_version() {
   local pkg="$PROJECT_ROOT/package.json"
   if [[ -f "$pkg" ]]; then
@@ -153,6 +334,229 @@ get_cli_version() {
     return
   fi
   echo "unknown"
+}
+
+create_latex_emoji_header() {
+  if [[ "$PDF_RENDERER" != "latex" || "$LATEX_EMOJI_MODE" == "off" ]]; then
+    return
+  fi
+
+  local tmp_path
+  local fallback_font="$LATEX_EMOJI_MONO_FONT"
+  local twemoji_map_lines=""
+  local unicode_symbol_lines=""
+  tmp_path="$(mktemp "./md2pdf-latex-emoji-XXXXXX")"
+  LATEX_EMOJI_HEADER_PATH="${tmp_path}.tex"
+  mv "$tmp_path" "$LATEX_EMOJI_HEADER_PATH"
+  LATEX_EMOJI_HEADER_PATH="$(cd "$(dirname "$LATEX_EMOJI_HEADER_PATH")" && pwd)/$(basename "$LATEX_EMOJI_HEADER_PATH")"
+
+  if [[ -n "${NORMALIZED_INPUT:-}" && -f "$NORMALIZED_INPUT" ]]; then
+    local unicode_map_path
+    unicode_map_path="$(mktemp "${TMPDIR:-/tmp}/md2pdf-unicode-map-XXXXXX")"
+    if "$PYTHON" - "$NORMALIZED_INPUT" > "$unicode_map_path" <<'PY'
+import pathlib
+import sys
+
+text = pathlib.Path(sys.argv[1]).read_text(encoding="utf-8", errors="ignore")
+
+def is_emoji_candidate(codepoint):
+    return (
+        0x1F000 <= codepoint <= 0x1FAFF
+        or 0x2600 <= codepoint <= 0x27BF
+        or 0x2B00 <= codepoint <= 0x2BFF
+    )
+
+symbol_map = {
+    0x2197: "nearrow",
+    0x2264: "leq",
+    0x2265: "geq",
+}
+
+seen_emoji = set()
+seen_symbol = set()
+for ch in text:
+    cp = ord(ch)
+    if cp in {0x200D, 0xFE0E, 0xFE0F}:
+        continue
+    if cp in symbol_map and ch not in seen_symbol:
+        print(f"symbol\t{ch}\t{symbol_map[cp]}")
+        seen_symbol.add(ch)
+    if is_emoji_candidate(cp) and ch not in seen_emoji:
+        print(f"emoji\t{ch}\t{cp:x}")
+        seen_emoji.add(ch)
+PY
+    then
+      while IFS=$'\t' read -r map_type map_char map_value; do
+        if [[ -z "$map_type" || -z "$map_char" || -z "$map_value" ]]; then
+          continue
+        fi
+        case "$map_type" in
+          emoji)
+            twemoji_map_lines+="    \\ifcsname twemoji ${map_value}\\endcsname\\newunicodechar{${map_char}}{\\texttwemoji{${map_value}}}\\fi"$'\n'
+            ;;
+          symbol)
+            case "$map_value" in
+              geq)
+                unicode_symbol_lines+="    \\newunicodechar{${map_char}}{\\ensuremath{\\geq}}"$'\n'
+                ;;
+              leq)
+                unicode_symbol_lines+="    \\newunicodechar{${map_char}}{\\ensuremath{\\leq}}"$'\n'
+                ;;
+              nearrow)
+                unicode_symbol_lines+="    \\newunicodechar{${map_char}}{\\ensuremath{\\nearrow}}"$'\n'
+                ;;
+            esac
+            ;;
+        esac
+      done < "$unicode_map_path"
+    fi
+    rm -f "$unicode_map_path" || true
+  fi
+
+  cat > "$LATEX_EMOJI_HEADER_PATH" <<EOF
+% Auto-generated by md2pdf.
+% Strategy:
+% 1) Try Twemoji mapping for detected emoji code points.
+% 2) Map common non-emoji Unicode symbols to LaTeX-safe equivalents.
+% 3) Otherwise, fallback to a configurable monochrome text font.
+\usepackage{iftex}
+\ifPDFTeX\else
+  \usepackage{fontspec}
+  \newif\ifmdtwonewunicodechar
+  \mdtwonewunicodecharfalse
+  \IfFileExists{newunicodechar.sty}{
+    \usepackage{newunicodechar}
+    \mdtwonewunicodechartrue
+  }{}
+  \newif\ifmdtwotwemojis
+  \mdtwotwemojisfalse
+  \IfFileExists{twemojis.sty}{
+    \usepackage{twemojis}
+    \mdtwotwemojistrue
+  }{}
+EOF
+
+  if [[ -n "$unicode_symbol_lines" ]]; then
+    cat >> "$LATEX_EMOJI_HEADER_PATH" <<'EOF'
+  \ifmdtwonewunicodechar
+EOF
+    printf '%s' "$unicode_symbol_lines" >> "$LATEX_EMOJI_HEADER_PATH"
+    cat >> "$LATEX_EMOJI_HEADER_PATH" <<'EOF'
+  \fi
+EOF
+  fi
+
+  if [[ -n "$twemoji_map_lines" ]]; then
+    cat >> "$LATEX_EMOJI_HEADER_PATH" <<'EOF'
+  \ifmdtwonewunicodechar
+    \ifmdtwotwemojis
+EOF
+    printf '%s' "$twemoji_map_lines" >> "$LATEX_EMOJI_HEADER_PATH"
+    cat >> "$LATEX_EMOJI_HEADER_PATH" <<'EOF'
+    \fi
+  \fi
+EOF
+  fi
+
+  if [[ -n "$fallback_font" ]]; then
+    cat >> "$LATEX_EMOJI_HEADER_PATH" <<EOF
+  \AtBeginDocument{
+    \ifmdtwotwemojis\else
+      \IfFontExistsTF{$fallback_font}{
+        \setmainfont{$fallback_font}
+      }{}
+    \fi
+  }
+EOF
+  fi
+
+  cat >> "$LATEX_EMOJI_HEADER_PATH" <<'EOF'
+\fi
+EOF
+}
+
+render_pdf_with_chromium() {
+  local normalized_input="$1"
+  local output_path="$2"
+  local html_tmp
+  local css_tmp
+
+  html_tmp="$(mktemp "./md2pdf-chromium-html-XXXXXX")"
+  css_tmp="$(mktemp "./md2pdf-chromium-css-XXXXXX")"
+  CHROMIUM_HTML_PATH="${html_tmp}.html"
+  CHROMIUM_CSS_PATH="${css_tmp}.css"
+  mv "$html_tmp" "$CHROMIUM_HTML_PATH"
+  mv "$css_tmp" "$CHROMIUM_CSS_PATH"
+  CHROMIUM_HTML_PATH="$(cd "$(dirname "$CHROMIUM_HTML_PATH")" && pwd)/$(basename "$CHROMIUM_HTML_PATH")"
+  CHROMIUM_CSS_PATH="$(cd "$(dirname "$CHROMIUM_CSS_PATH")" && pwd)/$(basename "$CHROMIUM_CSS_PATH")"
+
+  cat > "$CHROMIUM_CSS_PATH" <<EOF
+@page { margin: $TB_MARGIN $LR_MARGIN; }
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  line-height: 1.45;
+}
+table {
+  border-collapse: collapse;
+  width: 100%;
+  margin: 0.75em 0;
+}
+th, td {
+  border: 1px solid #cfcfcf;
+  padding: 0.35em 0.45em;
+  vertical-align: top;
+}
+th {
+  background: #f7f7f7;
+  text-align: left;
+}
+code, pre {
+  font-family: Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+}
+EOF
+
+  local pandoc_html_args=(
+    "$normalized_input"
+    -o "$CHROMIUM_HTML_PATH"
+    --from="$PANDOC_FROM_FORMAT"
+    --to=html5
+    --standalone
+    --resource-path=.
+    --filter "$FILTER"
+    --columns="$PANDOC_COLUMNS"
+    --css "$CHROMIUM_CSS_PATH"
+  )
+
+  pandoc "${pandoc_html_args[@]}"
+
+  local chromium_args=(
+    --headless=new
+    --disable-gpu
+    --allow-file-access-from-files
+    --no-pdf-header-footer
+    --print-to-pdf="$output_path"
+    "file://$CHROMIUM_HTML_PATH"
+  )
+  if ! "$CHROMIUM_BIN" "${chromium_args[@]}"; then
+    chromium_args=(
+      --headless
+      --disable-gpu
+      --allow-file-access-from-files
+      --print-to-pdf-no-header
+      --print-to-pdf="$output_path"
+      "file://$CHROMIUM_HTML_PATH"
+    )
+    if ! "$CHROMIUM_BIN" "${chromium_args[@]}"; then
+      chromium_args=(
+        --headless
+        --disable-gpu
+        --allow-file-access-from-files
+        --print-to-pdf="$output_path"
+        "file://$CHROMIUM_HTML_PATH"
+      )
+      "$CHROMIUM_BIN" "${chromium_args[@]}"
+    fi
+  fi
 }
 
 init_config_file() {
@@ -191,6 +595,7 @@ Converts Markdown to PDF and renders Mermaid code blocks as vector assets for hi
 
 Options:
   -o, --output <file>            Output PDF path
+  --renderer <latex|chromium>    PDF renderer (default: latex)
   --config <file>                Additional config file to load
   --init [path]                  Create default config file (default: \$HOME/.config/md2pdf/config.env)
   --force                        Overwrite existing config file when used with --init
@@ -205,6 +610,13 @@ Mermaid defaults:
   MERMAID_LATEX_FORMAT defaults to "svg" for high-resolution vector diagrams.
   MERMAID_PDF_FIT defaults to "true" so Mermaid PDF assets use tight page bounds.
   MERMAID_AUTO_PDF_FALLBACK defaults to "true" for foreignObject label fallback.
+  LATEX_EMOJI_MODE defaults to "auto" (twemoji mapping, then mono fallback).
+  LATEX_EMOJI_MONO_FONT defaults to "DejaVu Sans".
+
+Renderer notes:
+  latex: pandoc -> xelatex (default, existing behavior)
+  chromium: pandoc -> standalone HTML -> headless Chromium print-to-PDF
+  chromium mode preserves browser-grade emoji/glyph rendering in output.
 
 Config loading order:
   1) $HOME/.config/md2pdf/config.env
@@ -222,6 +634,7 @@ ORIG_CWD="$(pwd)"
 
 # Capture environment overrides before defaults are initialized.
 HAS_ENV_PDF_ENGINE=0
+HAS_ENV_PDF_RENDERER=0
 HAS_ENV_PANDOC_COLUMNS=0
 HAS_ENV_LR_MARGIN=0
 HAS_ENV_TB_MARGIN=0
@@ -232,12 +645,17 @@ HAS_ENV_TABLE_STYLE=0
 HAS_ENV_MERMAID_BIN=0
 HAS_ENV_MERMAID_CONFIG=0
 HAS_ENV_MERMAID_LATEX_FORMAT=0
+HAS_ENV_CHROMIUM_MERMAID_FORMAT=0
 HAS_ENV_MERMAID_PDF_FIT=0
 HAS_ENV_MERMAID_AUTO_PDF_FALLBACK=0
+HAS_ENV_LATEX_EMOJI_MODE=0
+HAS_ENV_LATEX_EMOJI_MONO_FONT=0
+HAS_ENV_CHROMIUM_BIN=0
 HAS_ENV_PYTHON=0
 HAS_ENV_PUPPETEER_CFG=0
 
 ENV_PDF_ENGINE=""
+ENV_PDF_RENDERER=""
 ENV_PANDOC_COLUMNS=""
 ENV_LR_MARGIN=""
 ENV_TB_MARGIN=""
@@ -248,12 +666,17 @@ ENV_TABLE_STYLE=""
 ENV_MERMAID_BIN=""
 ENV_MERMAID_CONFIG=""
 ENV_MERMAID_LATEX_FORMAT=""
+ENV_CHROMIUM_MERMAID_FORMAT=""
 ENV_MERMAID_PDF_FIT=""
 ENV_MERMAID_AUTO_PDF_FALLBACK=""
+ENV_LATEX_EMOJI_MODE=""
+ENV_LATEX_EMOJI_MONO_FONT=""
+ENV_CHROMIUM_BIN=""
 ENV_PYTHON=""
 ENV_PUPPETEER_CFG=""
 
 if [[ -n "${PDF_ENGINE+x}" ]]; then HAS_ENV_PDF_ENGINE=1; ENV_PDF_ENGINE="$PDF_ENGINE"; fi
+if [[ -n "${PDF_RENDERER+x}" ]]; then HAS_ENV_PDF_RENDERER=1; ENV_PDF_RENDERER="$PDF_RENDERER"; fi
 if [[ -n "${PANDOC_COLUMNS+x}" ]]; then HAS_ENV_PANDOC_COLUMNS=1; ENV_PANDOC_COLUMNS="$PANDOC_COLUMNS"; fi
 if [[ -n "${LR_MARGIN+x}" ]]; then HAS_ENV_LR_MARGIN=1; ENV_LR_MARGIN="$LR_MARGIN"; fi
 if [[ -n "${TB_MARGIN+x}" ]]; then HAS_ENV_TB_MARGIN=1; ENV_TB_MARGIN="$TB_MARGIN"; fi
@@ -264,8 +687,12 @@ if [[ -n "${TABLE_STYLE+x}" ]]; then HAS_ENV_TABLE_STYLE=1; ENV_TABLE_STYLE="$TA
 if [[ -n "${MERMAID_BIN+x}" ]]; then HAS_ENV_MERMAID_BIN=1; ENV_MERMAID_BIN="$MERMAID_BIN"; fi
 if [[ -n "${MERMAID_CONFIG+x}" ]]; then HAS_ENV_MERMAID_CONFIG=1; ENV_MERMAID_CONFIG="$MERMAID_CONFIG"; fi
 if [[ -n "${MERMAID_LATEX_FORMAT+x}" ]]; then HAS_ENV_MERMAID_LATEX_FORMAT=1; ENV_MERMAID_LATEX_FORMAT="$MERMAID_LATEX_FORMAT"; fi
+if [[ -n "${CHROMIUM_MERMAID_FORMAT+x}" ]]; then HAS_ENV_CHROMIUM_MERMAID_FORMAT=1; ENV_CHROMIUM_MERMAID_FORMAT="$CHROMIUM_MERMAID_FORMAT"; fi
 if [[ -n "${MERMAID_PDF_FIT+x}" ]]; then HAS_ENV_MERMAID_PDF_FIT=1; ENV_MERMAID_PDF_FIT="$MERMAID_PDF_FIT"; fi
 if [[ -n "${MERMAID_AUTO_PDF_FALLBACK+x}" ]]; then HAS_ENV_MERMAID_AUTO_PDF_FALLBACK=1; ENV_MERMAID_AUTO_PDF_FALLBACK="$MERMAID_AUTO_PDF_FALLBACK"; fi
+if [[ -n "${LATEX_EMOJI_MODE+x}" ]]; then HAS_ENV_LATEX_EMOJI_MODE=1; ENV_LATEX_EMOJI_MODE="$LATEX_EMOJI_MODE"; fi
+if [[ -n "${LATEX_EMOJI_MONO_FONT+x}" ]]; then HAS_ENV_LATEX_EMOJI_MONO_FONT=1; ENV_LATEX_EMOJI_MONO_FONT="$LATEX_EMOJI_MONO_FONT"; fi
+if [[ -n "${CHROMIUM_BIN+x}" ]]; then HAS_ENV_CHROMIUM_BIN=1; ENV_CHROMIUM_BIN="$CHROMIUM_BIN"; fi
 if [[ -n "${PYTHON+x}" ]]; then HAS_ENV_PYTHON=1; ENV_PYTHON="$PYTHON"; fi
 if [[ -n "${PUPPETEER_CFG+x}" ]]; then HAS_ENV_PUPPETEER_CFG=1; ENV_PUPPETEER_CFG="$PUPPETEER_CFG"; fi
 
@@ -274,9 +701,17 @@ FILTER="$PROJECT_ROOT/lib/run_pandoc_mermaid_filter.sh"
 TABLE_STYLE="$PROJECT_ROOT/assets/table-style.tex"
 MERMAID_CONFIG="$PROJECT_ROOT/assets/mermaid.config.json"
 MERMAID_LATEX_FORMAT="svg"
+MERMAID_HTML_FORMAT="svg"
+MERMAID_FORCE_FORMAT=""
+CHROMIUM_MERMAID_FORMAT="png"
 MERMAID_PDF_FIT="true"
 MERMAID_AUTO_PDF_FALLBACK="true"
+LATEX_EMOJI_MODE="auto"
+LATEX_EMOJI_MONO_FONT="DejaVu Sans"
+PDF_RENDERER="latex"
 PDF_ENGINE="xelatex"
+CHROMIUM_BIN=""
+PANDOC_FROM_FORMAT="markdown+lists_without_preceding_blankline"
 PANDOC_COLUMNS="200"
 LR_MARGIN="0.7in"
 TB_MARGIN="0.5in"
@@ -300,6 +735,13 @@ CLI_CLEANUP_OVERRIDE=""
 INIT_CONFIG=0
 INIT_CONFIG_PATH=""
 INIT_FORCE=0
+NORMALIZED_INPUT_PATH=""
+CHROMIUM_HTML_PATH=""
+CHROMIUM_CSS_PATH=""
+LATEX_EMOJI_HEADER_PATH=""
+CLI_RENDERER_OVERRIDE=""
+
+trap cleanup_runtime_artifacts EXIT
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -338,6 +780,14 @@ while [[ $# -gt 0 ]]; do
         exit 1
       fi
       CONFIG_PATH="$2"
+      shift 2
+      ;;
+    --renderer)
+      if [[ $# -lt 2 ]]; then
+        echo "Error: missing value for --renderer." >&2
+        exit 1
+      fi
+      CLI_RENDERER_OVERRIDE="$2"
       shift 2
       ;;
     --keep-mermaid-assets)
@@ -412,6 +862,7 @@ fi
 
 # Re-apply environment overrides with highest precedence.
 if [[ $HAS_ENV_PDF_ENGINE -eq 1 ]]; then PDF_ENGINE="$ENV_PDF_ENGINE"; fi
+if [[ $HAS_ENV_PDF_RENDERER -eq 1 ]]; then PDF_RENDERER="$ENV_PDF_RENDERER"; fi
 if [[ $HAS_ENV_PANDOC_COLUMNS -eq 1 ]]; then PANDOC_COLUMNS="$ENV_PANDOC_COLUMNS"; fi
 if [[ $HAS_ENV_LR_MARGIN -eq 1 ]]; then LR_MARGIN="$ENV_LR_MARGIN"; fi
 if [[ $HAS_ENV_TB_MARGIN -eq 1 ]]; then TB_MARGIN="$ENV_TB_MARGIN"; fi
@@ -422,15 +873,55 @@ if [[ $HAS_ENV_TABLE_STYLE -eq 1 ]]; then TABLE_STYLE="$ENV_TABLE_STYLE"; fi
 if [[ $HAS_ENV_MERMAID_BIN -eq 1 ]]; then MERMAID_BIN="$ENV_MERMAID_BIN"; fi
 if [[ $HAS_ENV_MERMAID_CONFIG -eq 1 ]]; then MERMAID_CONFIG="$ENV_MERMAID_CONFIG"; fi
 if [[ $HAS_ENV_MERMAID_LATEX_FORMAT -eq 1 ]]; then MERMAID_LATEX_FORMAT="$ENV_MERMAID_LATEX_FORMAT"; fi
+if [[ $HAS_ENV_CHROMIUM_MERMAID_FORMAT -eq 1 ]]; then CHROMIUM_MERMAID_FORMAT="$ENV_CHROMIUM_MERMAID_FORMAT"; fi
 if [[ $HAS_ENV_MERMAID_PDF_FIT -eq 1 ]]; then MERMAID_PDF_FIT="$(normalize_bool "$ENV_MERMAID_PDF_FIT")"; fi
 if [[ $HAS_ENV_MERMAID_AUTO_PDF_FALLBACK -eq 1 ]]; then MERMAID_AUTO_PDF_FALLBACK="$(normalize_bool "$ENV_MERMAID_AUTO_PDF_FALLBACK")"; fi
+if [[ $HAS_ENV_LATEX_EMOJI_MODE -eq 1 ]]; then LATEX_EMOJI_MODE="$ENV_LATEX_EMOJI_MODE"; fi
+if [[ $HAS_ENV_LATEX_EMOJI_MONO_FONT -eq 1 ]]; then LATEX_EMOJI_MONO_FONT="$ENV_LATEX_EMOJI_MONO_FONT"; fi
+if [[ $HAS_ENV_CHROMIUM_BIN -eq 1 ]]; then CHROMIUM_BIN="$ENV_CHROMIUM_BIN"; fi
 if [[ $HAS_ENV_PYTHON -eq 1 ]]; then PYTHON="$ENV_PYTHON"; fi
 if [[ $HAS_ENV_PUPPETEER_CFG -eq 1 ]]; then PUPPETEER_CFG="$ENV_PUPPETEER_CFG"; fi
 
 if [[ -n "$CLI_CLEANUP_OVERRIDE" ]]; then
   CLEANUP_MERMAID_ASSETS="$CLI_CLEANUP_OVERRIDE"
 fi
+if [[ -n "$CLI_RENDERER_OVERRIDE" ]]; then
+  PDF_RENDERER="$CLI_RENDERER_OVERRIDE"
+fi
 
+PDF_RENDERER="$(printf '%s' "$PDF_RENDERER" | tr '[:upper:]' '[:lower:]')"
+case "$PDF_RENDERER" in
+  latex|chromium) ;;
+  *)
+    echo "Error: PDF renderer must be one of: latex, chromium." >&2
+    exit 1
+    ;;
+esac
+
+# Chromium mode prints browser-rendered HTML where Mermaid SVG foreignObject
+# labels are supported; PDF fallback assets can render as dark blocks there.
+if [[ "$PDF_RENDERER" == "chromium" ]]; then
+  MERMAID_AUTO_PDF_FALLBACK="false"
+fi
+CHROMIUM_MERMAID_FORMAT="$(printf '%s' "$CHROMIUM_MERMAID_FORMAT" | tr '[:upper:]' '[:lower:]')"
+case "$CHROMIUM_MERMAID_FORMAT" in
+  svg|png) ;;
+  *)
+    echo "Error: CHROMIUM_MERMAID_FORMAT must be one of: svg, png." >&2
+    exit 1
+    ;;
+esac
+if [[ "$PDF_RENDERER" == "chromium" ]]; then
+  MERMAID_FORCE_FORMAT="$CHROMIUM_MERMAID_FORMAT"
+fi
+LATEX_EMOJI_MODE="$(printf '%s' "$LATEX_EMOJI_MODE" | tr '[:upper:]' '[:lower:]')"
+case "$LATEX_EMOJI_MODE" in
+  auto|off) ;;
+  *)
+    echo "Error: LATEX_EMOJI_MODE must be one of: auto, off." >&2
+    exit 1
+    ;;
+esac
 MERMAID_LATEX_FORMAT="$(printf '%s' "$MERMAID_LATEX_FORMAT" | tr '[:upper:]' '[:lower:]')"
 case "$MERMAID_LATEX_FORMAT" in
   pdf|svg|png) ;;
@@ -444,14 +935,25 @@ if [[ -z "$FILTER" || ! -x "$FILTER" ]]; then
   echo "Error: filter script is not executable: $FILTER" >&2
   exit 1
 fi
-if [[ -n "$TABLE_STYLE" && ! -f "$TABLE_STYLE" ]]; then
+if [[ "$PDF_RENDERER" == "latex" && -n "$TABLE_STYLE" && ! -f "$TABLE_STYLE" ]]; then
   echo "Error: table style file not found: $TABLE_STYLE" >&2
   exit 1
 fi
 
 require_cmd "pandoc" "Install pandoc first (or run ./install-system-deps.sh)."
-require_cmd "$PDF_ENGINE" "Install '$PDF_ENGINE' or set PDF_ENGINE in config."
 require_cmd "$PYTHON" "Install Python 3 (or run ./setup-local-deps.sh)."
+if [[ "$PDF_RENDERER" == "latex" ]]; then
+  require_cmd "$PDF_ENGINE" "Install '$PDF_ENGINE' or set PDF_ENGINE in config."
+else
+  if [[ -z "$CHROMIUM_BIN" ]]; then
+    if ! CHROMIUM_BIN="$(detect_chromium_bin)"; then
+      echo "Error: no Chromium/Chrome executable found for renderer 'chromium'." >&2
+      echo "Set CHROMIUM_BIN in config/env or install chrome/chromium." >&2
+      exit 1
+    fi
+  fi
+  require_cmd "$CHROMIUM_BIN" "Install Chromium/Chrome or set CHROMIUM_BIN in config."
+fi
 
 if [[ -z "$OUTPUT" ]]; then
   case "$INPUT_ABS" in
@@ -474,7 +976,6 @@ if grep -Eq '^[[:space:]]*```[[:space:]]*mermaid([[:space:]]|$)' "$INPUT_ABS"; t
   MERMAID_IMAGE_PREFIX="${MERMAID_ASSET_PREFIX}-${RUN_ID}"
   export MERMAID_IMAGE_PREFIX
   MERMAID_ASSET_DIR_ABS="$INPUT_DIR/${MERMAID_IMAGE_PREFIX}-images"
-  trap cleanup_mermaid_assets EXIT
 fi
 
 export MERMAID_BIN
@@ -482,6 +983,8 @@ if [[ -n "$MERMAID_CONFIG" ]]; then
   export MERMAID_CONFIG
 fi
 export MERMAID_LATEX_FORMAT
+export MERMAID_HTML_FORMAT
+export MERMAID_FORCE_FORMAT
 export MERMAID_PDF_FIT
 export MERMAID_AUTO_PDF_FALLBACK
 export PYTHON
@@ -490,23 +993,36 @@ if [[ -n "$PUPPETEER_CFG" ]]; then
 fi
 
 pandoc_args=(
-  "$INPUT_FILE"
-  -o "$OUTPUT"
-  --resource-path=.
-  --filter "$FILTER"
-  --pdf-engine="$PDF_ENGINE"
-  --columns="$PANDOC_COLUMNS"
-  -V "geometry:left=$LR_MARGIN"
-  -V "geometry:right=$LR_MARGIN"
-  -V "geometry:top=$TB_MARGIN"
-  -V "geometry:bottom=$TB_MARGIN"
+  "$(normalize_pipe_table_spacing "$INPUT_ABS")"
 )
-if [[ -n "$TABLE_STYLE" ]]; then
-  pandoc_args+=( -H "$TABLE_STYLE" )
-fi
+NORMALIZED_INPUT="${pandoc_args[0]}"
 
 cd "$INPUT_DIR"
-pandoc "${pandoc_args[@]}"
+if [[ "$PDF_RENDERER" == "chromium" ]]; then
+  render_pdf_with_chromium "$NORMALIZED_INPUT" "$OUTPUT"
+else
+  create_latex_emoji_header
+  pandoc_args=(
+    "$NORMALIZED_INPUT"
+    -o "$OUTPUT"
+    --from="$PANDOC_FROM_FORMAT"
+    --resource-path=.
+    --filter "$FILTER"
+    --pdf-engine="$PDF_ENGINE"
+    --columns="$PANDOC_COLUMNS"
+    -V "geometry:left=$LR_MARGIN"
+    -V "geometry:right=$LR_MARGIN"
+    -V "geometry:top=$TB_MARGIN"
+    -V "geometry:bottom=$TB_MARGIN"
+  )
+  if [[ -n "$TABLE_STYLE" ]]; then
+    pandoc_args+=( -H "$TABLE_STYLE" )
+  fi
+  if [[ -n "$LATEX_EMOJI_HEADER_PATH" ]]; then
+    pandoc_args+=( -H "$LATEX_EMOJI_HEADER_PATH" )
+  fi
+  pandoc "${pandoc_args[@]}"
+fi
 
 echo "PDF created: $OUTPUT"
 if [[ "$HAS_MERMAID" == "true" && "$CLEANUP_MERMAID_ASSETS" != "true" ]]; then
